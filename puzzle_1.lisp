@@ -1,11 +1,11 @@
 ;; -*- lisp-mode -*-
 
-"
+(defvar sample-input-1 "
 1abc2
 pqr3stu8vwx
 a1b2c3d4e5f
 treb7uchet
-"
+")
 
 (defun split-string (text &optional (record-separator (string #\Newline)))
   "Split some text string into lines. Default record separator is \n."
@@ -35,7 +35,7 @@ treb7uchet
   "Return all two-digit numbers from a block of text."
   (remove-if #'null (mapcar #'first-and-last-digits (split-string text))))
 
-		  
+
 (defun puzzle1 (text)
   "Solve first puzzle"
   (reduce #'+ (mapcar #'parse-integer (two-digit-numbers text))))
