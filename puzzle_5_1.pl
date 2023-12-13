@@ -4,62 +4,131 @@ use diagnostics;
 use warnings;
 use strict;
 
-use List::Util qw/reduce max/;
+use List::Util qw/reduce max min/;
 use Data::Dumper;
 
-# Sluuurp!
-my @lines = (<>);
-chomp @lines;
 
-my %cards = ();
-my @winnings = ();
+my @seeds = ();
+my %maps = ();
+my %ranges = ();
 
-foreach (@lines) {
-    next unless m/^(Card\s+(\d+)):([^\|]+)\|(.+)$/xo; 
+my ($src, $dest, $map_name);
 
-    my ($label, $card_id, $winning_numbers, $numbers) = ($1, $2, $3, $4);
+while (<>) {
+    next if m/^\s*$/;
 
-    unless (defined $cards{$card_id}) {
-	$cards{$card_id} = { label => $label,
-			     winning_numbers => $winning_numbers,
-			     numbers => $numbers,
-			     instances => 1 }
-    }
-    else {
-	$cards{$card_id}->{instances}++;
-	$cards{$card_id}->{label} = $label;
-	$cards{$card_id}->{winning_numbers} = $winning_numbers;
-	$cards{$card_id}->{numbers} = $numbers;
-    }
+    chomp;
     
-    my $matches = 0;
-    while ($winning_numbers =~ m/(\d+)/gxo) {
-	my $winner = $1;
-	$matches++ if $numbers =~ m/\b($winner)\b/;
-    }
-    my $card = $cards{$card_id};
-    
-    for (my $i = 0; $i < $card->{instances}; $i++) {
-	for (my $j = 1; $j <= $matches; $j++) {
-	    my $next_card_id = $card_id + $j;
-	    
-	    $cards{$next_card_id} = { instances => 1 }
-	    and next
-		unless defined $cards{$next_card_id};
-	    my $instances = $cards{$next_card_id}->{instances};
-	    $cards{$next_card_id}->{instances} = ++$instances;
+    if (m/^seeds:/) {
+	while(m/\b(\d+)\b/g) {
+	    my $seed = $1;
+	    push(@seeds, $seed);
 	}
+	next;
     }
-    
-    warn "card_id: ${card_id}, matches: ${matches}";
+
+    if (m/^((\w+)-to-(\w+)) \s+ map.+$/x) {
+	($map_name, $src, $dest) = ($1, $2, $3);
+	$maps{$map_name} = [];
+
+	next;
+    }
+
+    if (m/^(\d+)\s+(\d+)\s(\d+)\s*$/) {
+	my ($dest_range_start, $src_range_start, $length) = ($1, $2, $3);
+
+	my $mapper = make_mapper(
+	    src_range_start => $src_range_start,
+	    dest_range_start => $dest_range_start,
+	    length => $length
+	    );
+	
+	push(@{$maps{$map_name}}, $mapper);
+    }
 }
 
-warn "cards: ", Dumper \%cards;
+warn "seeds: ", Dumper \@seeds;
 
-my $sum = reduce {
-    $a + $b
-} map {
-    $cards{$_}->{instances}
-} (keys %cards);
+my %seed_to_location = ();
 
-print "Final tally of cards: ${sum}\n";
+foreach my $seed (sort @seeds) {
+    my $start = 'seed';
+    my $end = 'location';
+    
+    my $current_value = $seed;
+    my $current_src = $start;
+    my $current_dest = '';
+
+    while ($current_src ne $end) {
+	warn "current src: '${current_src}', current value: '${current_value}'";
+	
+	my @matching_maps = grep {
+	    m/^($current_src)-to/;
+	} (keys %maps);
+
+	my $current_map_name = shift @matching_maps;
+	$current_dest = $2 if ($current_map_name =~ m/^(\w+)-to-(\w+)/);
+	
+	warn "looking up ${current_src} '${current_value}' in '${current_map_name}'";
+
+	# remember a map is just an array of lambdas
+	my @current_map = @{$maps{$current_map_name}};
+
+	# So we're going to loop through our maps until we can find one that changes our value.
+	# when we do, we'll exit our eval via die and go to the next step.
+	eval {
+	    foreach my $fn (@current_map) {
+		my $val = $fn->($current_value);
+		# escape the loop if we found a match
+		die "$val" if $val != $current_value;
+	    }
+	} or do {
+	    if ($@) {
+		warn 'caught $@: ', $@;
+		if ($@ =~ m/(\d+)/) {
+		    my $val = $1;
+		    warn "found a matching mapper for '${current_value}', setting to ${val}";
+		    $current_value = $val;
+		}
+	    }
+	};
+	warn "current value is now '${current_value}'";
+	$current_src = $current_dest;
+    }
+
+    $seed_to_location{$seed} = $current_value;
+}
+
+warn "seed_to_location: ", Dumper \%seed_to_location;
+
+my @locations = ();
+foreach (sort keys %seed_to_location) {
+    push(@locations, $seed_to_location{$_});
+}
+
+print "Lowest location: ", min(@locations), "\n";
+
+
+
+# return a function that maps range to range
+sub make_mapper {
+    my %params = @_;
+    
+    my @src_range = ($params{src_range_start}, $params{src_range_start} + $params{length});
+    my @dest_range = ($params{dest_range_start}, $params{dest_range_start} + $params{length});
+
+    return sub {
+	my $input = shift;
+
+	warn "'${input}' is not between '$src_range[0]' and '$src_range[1]'"
+	    and return $input
+	    unless $input >= $src_range[0]
+	    and $input <= $src_range[1];
+
+	my $radius = $input - $src_range[0];
+	
+	warn "'${input}' is between '$src_range[0]' and '$src_range[1]'";
+
+	return $dest_range[0] + $radius;
+    }
+}
